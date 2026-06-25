@@ -1,0 +1,12 @@
+chromadb>=0.5.0
+ftfy>=6.2.0
+openai>=1.0.0
+python-dotenv>=1.0.0
+pypdf>=4.0.0
+pytest>=8.0.0
+
+# Optional — only needed if you want to run the web server (src/api.py)
+# pip install fastapi uvicorn
+
+# Optional — only needed if you want to run the Telegram bot (src/bot.py)
+# pip install python-telegram-bot

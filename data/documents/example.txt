@@ -1,0 +1,11 @@
+This is an example input file for the RAG system.
+
+Drop your .pdf or .txt documents in this folder before running ingest.py.
+The system will read, clean, chunk, and index whatever files you place here.
+
+Examples of what works well:
+- Academic papers in PDF format
+- Research notes in plain text
+- Any document you want to be able to ask questions about
+
+This file itself will be indexed if you run ingest.py without removing it.

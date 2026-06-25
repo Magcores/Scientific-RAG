@@ -1,0 +1,200 @@
+# RAG over PDF and TXT documents
+
+This project lets you ask questions in plain English over a folder of local documents — academic papers, notes, anything in PDF or TXT format — and get answers grounded in what those documents actually say, with citations.
+
+---
+
+## What it looks like
+
+Once set up, you run it interactively and it feels like this:
+
+```
+> What is the role of theta activity in cognitive functioning?
+
+Theta activity (4–8 Hz) is strongly associated with cognitive functioning,
+particularly working memory and attention. Studies show that theta power
+increases during memory encoding tasks and is linked to executive function
+in both typical and atypical populations.
+
+Sources:
+- Tan et al. 2024, page 2 (score: 0.87)
+- Antúnez et al. 2021, page 5 (score: 0.81)
+
+[1/50 questions used this session]
+
+> quit
+Goodbye.
+```
+
+---
+
+## File structure
+
+**Input — what you put in:**
+```
+data/documents/
+├── example.txt          ← placeholder, replace with your own files
+├── your_paper.pdf       ← drop any .pdf or .txt files here before ingesting
+└── your_notes.txt
+```
+
+**Output — what the system creates after running `ingest.py`:**
+```
+data/index/
+├── chroma_db/                  ← the vector database (created by ingest.py)
+│   ├── chroma.sqlite3          ← chunk text and metadata
+│   └── [uuid]/
+│       └── *.bin               ← embedding vectors (binary, not human-readable)
+└── chunks_preview.json         ← only created by --dry-run, for inspection only
+```
+
+`data/documents/` is tracked by git (only `example.txt` is included). `data/index/` is excluded from git entirely — it is created automatically the first time you run `ingest.py`.
+
+---
+
+## What you need to get started
+
+- Python 3.x
+- An OpenAI API key
+- A `.env` file in the project root (copy `.env.example` and fill in your key):
+  ```
+  OPENAI_API_KEY=sk-...
+  ```
+- Dependencies installed:
+  ```powershell
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  pip install -r requirements.txt
+  ```
+
+Put your `.pdf` or `.txt` files in the `data/documents/` folder before running anything.
+
+---
+
+## 1. `src/ingest.py` — reads your documents and builds the search index
+
+This is the first script you run. It goes through every file in `data/documents/`, cleans up the raw text (fixing encoding issues, removing repeated headers and footers, stripping reference sections), and splits everything into overlapping chunks small enough to be individually meaningful.
+
+Once it has the chunks, it sends them to OpenAI to create semantic embeddings — along with the chunk text and metadata like source file, page number, title, and year — and stores everything in a local **Chroma** database under `data/index/`. Chroma is a vector database built for this kind of similarity search.
+
+You only need to run this once, or again whenever you add new documents.
+
+Key tools used: `pypdf` to extract text from PDFs, `ftfy` to repair encoding artifacts, `openai` for embeddings, `chromadb` to store and index everything locally.
+
+```powershell
+# Check how your documents will be chunked before spending on API calls (free):
+python src\ingest.py --dry-run
+
+# Build the index:
+python src\ingest.py
+
+# Add new documents without rebuilding from scratch:
+python src\ingest.py --append
+
+# Keep reference sections (they are stripped by default):
+python src\ingest.py --keep-references
+```
+
+---
+
+## 2. `src/rag.py` — asks questions and generates answers
+
+This is the script you use day to day. You give it a question, it embeds that question the same way the chunks were embedded, searches the Chroma database for the most semantically similar chunks, and passes those chunks to an OpenAI chat model along with your question. The result is a short, grounded answer plus citations telling you which document and page it came from.
+
+It has two modes: pass a question directly and get one answer, or run it without a question to enter an interactive session where you keep asking until you type `quit`. The interactive mode loads the pipeline once and keeps it in memory, so follow-up questions are faster.
+
+A few limits are built in to avoid runaway costs: questions are capped at 500 characters, answers at 512 tokens, and the interactive session allows a maximum of 10 questions per minute and 50 questions total before asking you to restart.
+
+Key tools used: `openai` to embed the query and generate the answer, `chromadb` to search the index.
+
+```powershell
+# Ask a single question:
+python src\rag.py "What is theta activity related to?"
+
+# Interactive mode (keep asking questions):
+python src\rag.py
+
+# See the retrieved chunks before the answer:
+python src\rag.py "your question" --show-context
+
+# Retrieve more chunks (default is 5):
+python src\rag.py "your question" --top-k 8
+```
+
+---
+
+## 3. `src/faithfulness.py` — measures how much the answers hallucinate
+
+This is an optional evaluation script. It runs a set of predefined questions through the full pipeline and then checks whether each claim in the generated answers is actually supported by the retrieved chunks. A claim that cannot be traced back to the sources is a hallucination.
+
+It works by making two types of OpenAI calls per question: one to break the answer into individual factual claims, and one per claim to ask whether the retrieved context supports it. The result is a score between 0 and 1 per question, plus a per-claim breakdown showing exactly which parts of the answer were grounded and which were not.
+
+You can edit the `SAMPLE_QUESTIONS` list at the top of the file to match the kinds of questions you actually care about.
+
+Key tools used: `openai` as the judge model, same `RAGPipeline` from `rag.py`.
+
+```powershell
+python src\faithfulness.py
+```
+
+---
+
+## 4. `src/api.py` — exposes the pipeline as a web server
+
+This is an optional script that wraps the RAG pipeline in an HTTP API using **FastAPI**. Once running, any application — a website, a mobile app, a frontend you build later — can ask questions by sending an HTTP request. The RAG logic is identical to what the CLI does; this file just changes how questions arrive and how answers are returned.
+
+It includes the same rate limiting as the interactive CLI (per IP address, 10 requests per minute), reuses the input length limit from the pipeline, and automatically generates an interactive documentation page at `/docs` where you can test it in the browser.
+
+This requires two extra packages that are not in the core `requirements.txt`:
+```powershell
+pip install fastapi uvicorn
+```
+
+Run the server:
+```powershell
+python src\api.py
+```
+
+Then send a question:
+```
+POST http://localhost:8000/ask
+Body: {"query": "What is theta activity?"}
+```
+
+Or open `http://localhost:8000/docs` to test it interactively in the browser.
+
+---
+
+## 5. `src/bot.py` — exposes the pipeline as a Telegram bot
+
+This is an optional script that wraps the RAG pipeline as a Telegram bot using **python-telegram-bot**. Once running, you can ask questions directly from the Telegram app on your phone or desktop and get answers back as messages. Again, the RAG logic is the same — only the interface changes.
+
+Rate limiting is applied per Telegram user (10 questions per minute), and the same input length limit from the pipeline applies.
+
+Setup requires:
+1. Creating a bot via Telegram's `@BotFather` to get a token
+2. Adding the token to your `.env` file:
+   ```
+   TELEGRAM_BOT_TOKEN=your_token_here
+   ```
+3. Installing the extra package:
+   ```powershell
+   pip install python-telegram-bot
+   ```
+
+Run the bot:
+```powershell
+python src\bot.py
+```
+
+Then find your bot on Telegram and start sending questions.
+
+---
+
+## Tests
+
+The test suite covers the core logic — chunking, PDF cleaning, metadata extraction, source formatting — without making any API calls, so it runs offline and for free.
+
+```powershell
+python -m pytest tests/ -v --basetemp=".\tmp_pytest"
+```
