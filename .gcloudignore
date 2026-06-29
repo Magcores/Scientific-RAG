@@ -1,0 +1,15 @@
+# This file controls what gets uploaded to Google Cloud Build.
+# It overrides .gitignore — we need data/index/chroma_db/ included
+# in the build even though it's excluded from git.
+
+.gcloudignore
+.git/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+tmp_pytest/
+.env*
+!.env.example
+data/logs/
+data/documents/

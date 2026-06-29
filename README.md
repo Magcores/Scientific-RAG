@@ -1,6 +1,45 @@
-# RAG over PDF and TXT documents
+# RAG Chatbot — Production-Ready AI Assistant
 
-This project lets you ask questions in plain English over a folder of local documents — academic papers, notes, anything in PDF or TXT format — and get answers grounded in what those documents actually say, with citations.
+A production-grade Retrieval-Augmented Generation (RAG) system that powers a personal website chatbot. Visitors ask questions in plain English and get answers grounded strictly in a curated document knowledge base, served via a FastAPI backend deployed on Google Cloud Run.
+
+---
+
+## Tech Stack
+
+**AI / ML**
+- [OpenAI API](https://platform.openai.com) — `text-embedding-3-small` for semantic embeddings, `gpt-4o-mini` for answer generation
+- [ChromaDB](https://www.trychroma.com) — local vector database for semantic similarity search
+- Custom RAG pipeline with diversity-aware retrieval (per-source chunk capping, cosine similarity scoring)
+
+**Backend**
+- [FastAPI](https://fastapi.tiangolo.com) — REST API with automatic `/docs` UI
+- [Uvicorn](https://www.uvicorn.org) — ASGI server
+- [Pydantic](https://docs.pydantic.dev) — request/response validation
+- Per-IP rate limiting, input length validation, multi-language persona system (English / Spanish)
+
+**Document Processing**
+- [pypdf](https://pypdf.readthedocs.io) — PDF text extraction
+- [ftfy](https://ftfy.readthedocs.io) — encoding artifact repair
+- Custom recursive chunking with overlap, header/footer deduplication, reference section stripping
+
+**Infrastructure & Deployment**
+- [Docker](https://www.docker.com) / [Docker Desktop](https://www.docker.com/products/docker-desktop) — containerized application, local build and test
+- [Google Cloud Run](https://cloud.google.com/run) — serverless container deployment, autoscaling, zero cold-start config
+- [Google Artifact Registry](https://cloud.google.com/artifact-registry) — private Docker image registry
+- [Google Cloud Storage](https://cloud.google.com/storage) — conversation log storage (per-request JSON files, organized by date)
+- [Google Secret Manager](https://cloud.google.com/secret-manager) — secure API key injection at runtime
+- [Google Cloud SDK (`gcloud` CLI)](https://cloud.google.com/sdk) — provisioning, IAM permissions, deployments from terminal
+
+**Language & Runtime**
+- Python 3.11
+- [python-dotenv](https://github.com/theskumar/python-dotenv) — local environment variable management
+
+**Testing**
+- [pytest](https://pytest.org) — unit tests for chunking, PDF cleaning, metadata extraction (offline, no API calls)
+
+**Frontend**
+- Bilingual UI — English (Mary) and Spanish (María) personas
+- Conversation history maintained client-side across turns
 
 ---
 
@@ -20,7 +59,7 @@ Sources:
 - Tan et al. 2024, page 2 (score: 0.87)
 - Antúnez et al. 2021, page 5 (score: 0.81)
 
-[1/50 questions used this session]
+[1/20 questions used this session]
 
 > quit
 Goodbye.
@@ -103,7 +142,7 @@ This is the script you use day to day. You give it a question, it embeds that qu
 
 It has two modes: pass a question directly and get one answer, or run it without a question to enter an interactive session where you keep asking until you type `quit`. The interactive mode loads the pipeline once and keeps it in memory, so follow-up questions are faster.
 
-A few limits are built in to avoid runaway costs: questions are capped at 500 characters, answers at 512 tokens, and the interactive session allows a maximum of 10 questions per minute and 50 questions total before asking you to restart.
+A few limits are built in to avoid runaway costs: questions are capped at 500 characters, answers at 900 tokens, and the interactive session allows a maximum of 10 questions per minute and 20 questions total before asking you to restart.
 
 Key tools used: `openai` to embed the query and generate the answer, `chromadb` to search the index.
 
@@ -117,8 +156,8 @@ python src\rag.py
 # See the retrieved chunks before the answer:
 python src\rag.py "your question" --show-context
 
-# Retrieve more chunks (default is 5):
-python src\rag.py "your question" --top-k 8
+# Retrieve more chunks (default is 10):
+python src\rag.py "your question" --top-k 15
 ```
 
 ---
@@ -145,11 +184,6 @@ This is an optional script that wraps the RAG pipeline in an HTTP API using **Fa
 
 It includes the same rate limiting as the interactive CLI (per IP address, 10 requests per minute), reuses the input length limit from the pipeline, and automatically generates an interactive documentation page at `/docs` where you can test it in the browser.
 
-This requires two extra packages that are not in the core `requirements.txt`:
-```powershell
-pip install fastapi uvicorn
-```
-
 Run the server:
 ```powershell
 python src\api.py
@@ -157,11 +191,11 @@ python src\api.py
 
 Then send a question:
 ```
-POST http://localhost:8000/ask
+POST http://localhost:8080/ask
 Body: {"query": "What is theta activity?"}
 ```
 
-Or open `http://localhost:8000/docs` to test it interactively in the browser.
+Or open `http://localhost:8080/docs` to test it interactively in the browser.
 
 ---
 

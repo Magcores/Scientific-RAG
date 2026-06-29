@@ -1,0 +1,9 @@
+# Don't copy these into the container — they're not needed and add weight.
+
+.venv/
+__pycache__/
+.pytest_cache/
+.env
+.git/
+data/logs/
+data/documents/
