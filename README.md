@@ -26,7 +26,7 @@ A production-grade Retrieval-Augmented Generation (RAG) system that powers a per
 - [Docker](https://www.docker.com) / [Docker Desktop](https://www.docker.com/products/docker-desktop) — containerized application, local build and test
 - [Google Cloud Run](https://cloud.google.com/run) — serverless container deployment, autoscaling, zero cold-start config
 - [Google Artifact Registry](https://cloud.google.com/artifact-registry) — private Docker image registry
-- [Google Cloud Storage](https://cloud.google.com/storage) — conversation log storage (per-request JSON files, organized by date)
+- [Google Cloud Storage](https://cloud.google.com/storage) — conversation log storage (one JSON file per request, organized by date, auto-deleted after 90 days)
 - [Google Secret Manager](https://cloud.google.com/secret-manager) — secure API key injection at runtime
 - [Google Cloud SDK (`gcloud` CLI)](https://cloud.google.com/sdk) — provisioning, IAM permissions, deployments from terminal
 
@@ -197,6 +197,40 @@ Body: {"query": "What is theta activity?"}
 
 Or open `http://localhost:8080/docs` to test it interactively in the browser.
 
+### Conversation logging
+
+Every request is logged as a JSON file in Google Cloud Storage under `logs/YYYY-MM-DD/`. Each file contains:
+
+```json
+{
+  "timestamp": "2026-06-30T14:32:01Z",
+  "conversation_id": "abc-123",
+  "language": "en",
+  "query": "What MLOps projects has he built?",
+  "answer": "...",
+  "ip": "82.45.123.XX",
+  "user_agent": "Mozilla/5.0 Chrome/...",
+  "referrer": "https://martinantunez.com",
+  "response_time_ms": 1842,
+  "num_chunks": 8,
+  "top_score": 0.821,
+  "sources": ["documents/martin-antunez-experience.txt"],
+  "token_usage": { "input_tokens": 1240, "output_tokens": 187 },
+  "history_length": 2
+}
+```
+
+Logging is skipped silently when `GCS_BUCKET_NAME` is not set (safe for local development).
+
+### Privacy
+
+- **IP anonymization** — the last octet is replaced with `XX` (e.g. `82.45.123.XX`), which still allows city-level geolocation but cannot identify a specific user.
+- **Auto-deletion** — logs are automatically deleted after 90 days via a GCS lifecycle rule. Apply it once with:
+  ```powershell
+  gsutil lifecycle set lifecycle.json gs://your-bucket-name
+  ```
+- **No cookies or tracking scripts** — logging happens server-side only, on each request.
+
 ---
 
 ## 5. `src/bot.py` — exposes the pipeline as a Telegram bot
@@ -222,6 +256,37 @@ python src\bot.py
 ```
 
 Then find your bot on Telegram and start sending questions.
+
+---
+
+## 6. Deploying to Google Cloud Run
+
+The API is containerized with Docker and deployed to Cloud Run. The ChromaDB index is bundled inside the image at build time, so you must run `ingest.py` locally before building.
+
+You only need to rebuild and redeploy when you change code or documents. If you only change documents, run `ingest.py` first to rebuild the index, then follow the steps below.
+
+**Step 1 — Build and push the Docker image:**
+```powershell
+gcloud builds submit --tag us-central1-docker.pkg.dev/YOUR_PROJECT_ID/YOUR_REPO/rag-api "path\to\project"
+```
+
+**Step 2 — Deploy to Cloud Run:**
+```powershell
+gcloud run deploy rag-api `
+  --image us-central1-docker.pkg.dev/YOUR_PROJECT_ID/YOUR_REPO/rag-api:latest `
+  --region us-central1 `
+  --platform managed `
+  --allow-unauthenticated `
+  --set-secrets OPENAI_API_KEY=openai-api-key:latest `
+  --set-env-vars GCS_BUCKET_NAME=your-bucket-name
+```
+
+**Step 3 — Apply GCS log retention (run once):**
+```powershell
+gsutil lifecycle set lifecycle.json gs://your-bucket-name
+```
+
+The `OPENAI_API_KEY` is injected at runtime from Google Secret Manager — never baked into the image. The `GCS_BUCKET_NAME` variable tells the API where to write conversation logs; omit it to disable logging.
 
 ---
 

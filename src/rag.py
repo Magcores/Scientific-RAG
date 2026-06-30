@@ -252,7 +252,32 @@ class RAGPipeline:
         if not results and not history:
             return no_results_message or PERSONAS["en"]["no_results"]
 
-        return self.generate_answer(query, results, system_instructions, history)
+        text, _ = self.generate_answer(query, results, system_instructions, history)
+        return text
+
+    def answer_with_meta(
+        self,
+        query: str,
+        top_k: int = DEFAULT_TOP_K,
+        min_score: float = DEFAULT_MIN_SCORE,
+        system_instructions: str = "",
+        no_results_message: str = "",
+        history: list[dict[str, str]] | None = None,
+    ) -> tuple[str, list[SearchResult], dict]:
+        """Like answer() but also returns retrieved chunks and token usage for logging."""
+
+        if len(query) > MAX_QUERY_LENGTH:
+            return (
+                f"Your question is too long ({len(query)} characters). "
+                f"Please keep it under {MAX_QUERY_LENGTH} characters."
+            ), [], {}
+
+        results = self.retrieve(query, top_k, min_score)
+        if not results and not history:
+            return no_results_message or PERSONAS["en"]["no_results"], [], {}
+
+        text, usage = self.generate_answer(query, results, system_instructions, history)
+        return text, results, usage
 
     def generate_answer(
         self,
@@ -260,7 +285,7 @@ class RAGPipeline:
         results: list[SearchResult],
         system_instructions: str = "",
         history: list[dict[str, str]] | None = None,
-    ) -> str:
+    ) -> tuple[str, dict]:
         """Ask the chat model for a focused answer grounded in retrieved chunks."""
 
         require_openai_key()
@@ -284,7 +309,13 @@ class RAGPipeline:
             temperature=self.temperature,
             max_output_tokens=MAX_ANSWER_TOKENS,
         )
-        return response.output_text.strip()
+        usage = {}
+        if hasattr(response, "usage") and response.usage:
+            usage = {
+                "input_tokens": getattr(response.usage, "input_tokens", 0),
+                "output_tokens": getattr(response.usage, "output_tokens", 0),
+            }
+        return response.output_text.strip(), usage
 
 
 def format_context(results: list[SearchResult]) -> str:

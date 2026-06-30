@@ -70,7 +70,29 @@ GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME", "")
 # GCS logging
 # ---------------------------------------------------------------------------
 
-def log_to_gcs(query: str, answer: str, language: str) -> None:
+def anonymize_ip(ip: str) -> str:
+    """Drop the last octet of an IPv4 address so it can't identify a specific user."""
+    parts = ip.split(".")
+    if len(parts) == 4:
+        return f"{parts[0]}.{parts[1]}.{parts[2]}.XX"
+    return ip  # IPv6 or unknown — leave as-is
+
+
+def log_to_gcs(
+    query: str,
+    answer: str,
+    language: str,
+    ip: str = "",
+    user_agent: str = "",
+    referrer: str = "",
+    conversation_id: str = "",
+    response_time_ms: int = 0,
+    num_chunks: int = 0,
+    top_score: float = 0.0,
+    sources: list[str] | None = None,
+    token_usage: dict | None = None,
+    history_length: int = 0,
+) -> None:
     """
     Save one conversation entry to Google Cloud Storage.
 
@@ -97,9 +119,19 @@ def log_to_gcs(query: str, answer: str, language: str) -> None:
     try:
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "conversation_id": conversation_id,
             "language": language,
             "query": query,
             "answer": answer,
+            "ip": anonymize_ip(ip) if ip else "",
+            "user_agent": user_agent,
+            "referrer": referrer,
+            "response_time_ms": response_time_ms,
+            "num_chunks": num_chunks,
+            "top_score": round(top_score, 3),
+            "sources": sources or [],
+            "token_usage": token_usage or {},
+            "history_length": history_length,
         }
 
         # One folder per day, one file per conversation.
@@ -162,6 +194,7 @@ class Question(BaseModel):
     query: str
     language: str = "en"
     history: list[HistoryTurn] = []
+    conversation_id: str = ""
 
 
 class Answer(BaseModel):
@@ -207,14 +240,31 @@ def ask(question: Question, request: Request):
 
     history = [{"query": t.query, "answer": t.answer} for t in question.history]
 
-    answer = pipeline.answer(
+    start = time.monotonic()
+    answer, results, usage = pipeline.answer_with_meta(
         query=question.query,
         system_instructions=persona["system_instructions"],
         no_results_message=persona["no_results"],
         history=history or None,
     )
+    response_time_ms = int((time.monotonic() - start) * 1000)
 
-    log_to_gcs(question.query, answer, lang)
+    ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "").split(",")[0].strip()
+    log_to_gcs(
+        query=question.query,
+        answer=answer,
+        language=lang,
+        ip=ip,
+        user_agent=request.headers.get("user-agent", ""),
+        referrer=request.headers.get("referer", ""),
+        conversation_id=question.conversation_id,
+        response_time_ms=response_time_ms,
+        num_chunks=len(results),
+        top_score=results[0].score if results else 0.0,
+        sources=list({r.source for r in results}),
+        token_usage=usage,
+        history_length=len(history),
+    )
 
     return Answer(answer=answer, query=question.query)
 
