@@ -74,7 +74,7 @@ def anonymize_ip(ip: str) -> str:
     """Drop the last octet of an IPv4 address so it can't identify a specific user."""
     parts = ip.split(".")
     if len(parts) == 4:
-        return f"{parts[0]}.{parts[1]}.{parts[2]}.XX"
+        return f"{parts[0]}.{parts[1]}.{parts[2]}.X"
     return ip  # IPv6 or unknown — leave as-is
 
 
